@@ -1,61 +1,40 @@
-from typing import Union
-from fastapi import FastAPI, File, UploadFile
-from pydantic import BaseModel
+from typing import List
+from fastapi import FastAPI, Depends
+from sqlalchemy.orm import Session
 
-app= FastAPI()
+import models
+import schemas
+from database import SessionLocal, engine
 
-#1 모델 정의
+#DB 생성
+models.Base.metadata.create_all(bind=engine)
 
-app = FastAPI()
+app=FastAPI()
 
-#1. 모델정의
-class Item(BaseModel):
-    name: str
-    price : float
-    is_offer : Union[bool, None] = None
+#DB 세션관리
 
-#2. 가짜 데이터베이스 (서버끄면 사라짐)
-fake_items_db = {
-    1:{"name":"기본 아이템", "price" : 1000.0, "is_offer": False}
-}
+def get_db():
+    db=SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
-#Read 조회
-@app.get("/item/{item_id}")
-def read_item(item_id:int):
-    return fake_items_db.get(item_id, {"message":"아이템이 없습니다."})
+#[CREATE] 상품 등록
 
-#Create 생성
-@app.post("/items/{item_id}")
-def create_item(item_id:int, item:Item):
-    if item_id in fake_items_db:
-        return{"error":"이미 존재하는 ID입니다"}
+@app.post("/items", response_model=schemas.Item)
+def create_item(item: schemas.ItemCreate, db:Session=Depends(get_db)):
+    #스키마로 받은 데이터를 DB 모델로 변환
+    db_item = models.Item(name=item.name, price=item.price)
+    db.add(db_item)
+    db.commit()
+    db.refresh(db_item)
+    return db_item
 
-    #db에 저장
-    fake_items_db[item_id] = item.dict()
-    return {"message":"저장 성공", "item": item}
+#[READ] 상품 조회
+# 응답형태를 List로 정의
+@app.get("/items/", response_model=List[schemas.Item])
+def read_items(db: Session = Depends(get_db)):
+    items = db.query(models.Item).all()
+    return items
 
-#Update 수정
-@app.put("/items/{item_id}")
-def update_item(item_id:int, item:Item):
-    if item_id not in fake_items_db:
-        return {"error":"수정할 아이템이 없습니다."}
-
-    #db 내용 덮어쓰기
-    fake_items_db[item_id]=item.dict()
-    return {"message":"수정 성공", "item": item}
-
-#Delete 삭제
-@app.delete("/items/{item_id}")
-def delete_item(item_id: int):
-    if item_id not in fake_items_db:
-        return {"error": "삭제할 아이템이 없습니다."}
-    
-    #DB에서 삭제
-    del fake_items_db[item_id]
-    return {"message": "삭제 성공"}
-
-#File 업로드
-@app.post("/uploadfile/")
-async def create_upload_file(file: UploadFile):
-    return {"filename" :file.filename,
-    "content_type": file.content_type}
